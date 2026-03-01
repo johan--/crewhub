@@ -16,6 +16,34 @@ from app.db.database import get_db
 
 logger = logging.getLogger(__name__)
 
+
+def _tool_label(name: str, input_data: dict | None) -> str:
+    """Extract a concise label from a tool's input for display in chat bubbles."""
+    if not input_data or not isinstance(input_data, dict):
+        return ""
+    field_map: dict[str, list[str]] = {
+        "Agent": ["description"],
+        "Read": ["file_path"],
+        "Write": ["file_path"],
+        "Edit": ["file_path"],
+        "Bash": ["description", "command"],
+        "Grep": ["pattern"],
+        "Glob": ["pattern"],
+        "WebSearch": ["query"],
+        "WebFetch": ["url"],
+        "Skill": ["skill"],
+    }
+    fields = field_map.get(name, [])
+    for f in fields:
+        val = input_data.get(f)
+        if isinstance(val, str) and val:
+            return val[:60] + ("…" if len(val) > 60 else "")
+    for f in ("description", "file_path", "pattern", "query", "prompt"):
+        val = input_data.get(f)
+        if isinstance(val, str) and val:
+            return val[:60] + ("…" if len(val) > 60 else "")
+    return ""
+
 # ── Constants ─────────────────────────────────────────────────────
 STREAM_TOTAL_TIMEOUT = 600  # 10 minutes max for a streaming loop
 TURN_COMPLETE = "__TURN_COMPLETE__"
@@ -126,12 +154,19 @@ def _make_output_parser(queue: asyncio.Queue, agent_id: str | None = None, persi
                             text = block.get("text", "")
                             if text:
                                 queue.put_nowait(text)
-                        # Detect AskUserQuestion tool use
-                        elif block.get("type") == "tool_use" and block.get("name") == "AskUserQuestion":
-                            questions = block.get("input", {}).get("questions", [])
-                            if questions:
-                                q_data = json.dumps({"type": "question", "questions": questions})
-                                queue.put_nowait(f"\n__QUESTION__{q_data}__QUESTION__\n")
+                        elif block.get("type") == "tool_use":
+                            tool_name = block.get("name", "unknown")
+                            tool_input = block.get("input", {})
+                            # Detect AskUserQuestion tool use
+                            if tool_name == "AskUserQuestion":
+                                questions = tool_input.get("questions", [])
+                                if questions:
+                                    q_data = json.dumps({"type": "question", "questions": questions})
+                                    queue.put_nowait(f"\n__QUESTION__{q_data}__QUESTION__\n")
+                            else:
+                                label = _tool_label(tool_name, tool_input)
+                                marker = json.dumps({"name": tool_name, "status": "called", "label": label} if label else {"name": tool_name, "status": "called"})
+                                queue.put_nowait(f"\n__TOOL__{marker}__TOOL__\n")
             elif isinstance(content, str) and content:
                 queue.put_nowait(content)
 
@@ -142,6 +177,14 @@ def _make_output_parser(queue: asyncio.Queue, agent_id: str | None = None, persi
                 text = delta.get("text", "")
                 if text:
                     queue.put_nowait(text)
+
+        # Handle streaming tool_use blocks (incremental mode)
+        elif event_type == "content_block_start":
+            block = data.get("content_block", {})
+            if isinstance(block, dict) and block.get("type") == "tool_use":
+                tool_name = block.get("name", "unknown")
+                marker = json.dumps({"name": tool_name, "status": "called"})
+                queue.put_nowait(f"\n__TOOL__{marker}__TOOL__\n")
 
         # Surface error events from Claude Code
         elif event_type == "error":

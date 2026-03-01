@@ -28,9 +28,7 @@ export const SESSION_CONFIG_DEFAULTS = {
 
   // ── Bot Movement (3D) ──
   botWalkSpeedActive: 1.2, // walk speed when heading to desk
-  botWalkSpeedCoffee: 0.6, // walk speed going for coffee
   botWalkSpeedIdle: 0.3, // wander speed when idle
-  botWalkSpeedSleepWalk: 0.4, // walk speed heading to sleep corner
 
   // ── Wander Behavior (3D) ──
   wanderMinWaitS: 4, // min seconds between wander moves
@@ -42,10 +40,6 @@ export const SESSION_CONFIG_DEFAULTS = {
   wanderRepulsionRadius: 0.8, // world units for bot-to-bot repulsion
   wanderRepulsionStrength: 0.3, // repulsion force per second
   wanderCenterGravity: 1, // max center-attraction bonus for direction scoring
-
-  // ── Coffee Break (3D) ──
-  coffeeMinTimeS: 5, // min seconds at coffee machine
-  coffeeMaxTimeS: 10, // max seconds at coffee machine
 
   // ── Polling Intervals ──
   logViewerPollMs: 3_000, // log viewer refresh interval

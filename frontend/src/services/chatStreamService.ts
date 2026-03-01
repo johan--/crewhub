@@ -18,8 +18,15 @@ export interface QuestionData {
   multiSelect?: boolean
 }
 
+export interface ToolEventData {
+  name: string
+  status: string
+  label?: string
+}
+
 export interface StreamCallbacks {
   onChunk: (text: string) => void
+  onTool?: (tool: ToolEventData) => void
   onDone: () => void
   onError: (error: string) => void
   onQuestion?: (questions: QuestionData[]) => void
@@ -63,6 +70,13 @@ function processEventBatch(eventBlocks: string[], callbacks: StreamCallbacks): B
         if (parsed.text) callbacks.onChunk(parsed.text)
       } catch {
         // Skip malformed data
+      }
+    } else if (eventType === 'tool' && dataLine && !batchDone) {
+      try {
+        const parsed = JSON.parse(dataLine)
+        if (callbacks.onTool) callbacks.onTool(parsed)
+      } catch {
+        // Skip malformed tool data
       }
     } else if (eventType === 'question' && dataLine && !batchDone) {
       try {

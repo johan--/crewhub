@@ -10,8 +10,6 @@ import type { RoomBounds } from './World3DView'
 
 export type BotAnimState =
   | typeof IDLE_WANDERING
-  | typeof GETTING_COFFEE
-  | typeof SLEEPING_WALKING
   | 'sleeping'
   | 'offline'
 
@@ -38,14 +36,12 @@ export interface AnimState {
   nextTypingPauseTimer: number // seconds until next typing pause
 }
 
-// RoomInteractionPoints & WalkableCenter extracted to ./roomInteractionPoints.ts
-import type { RoomInteractionPoints, WalkableCenter } from './roomInteractionPoints'
+// WalkableCenter extracted to ./roomInteractionPoints.ts
+import type { WalkableCenter } from './roomInteractionPoints'
 
-const GETTING_COFFEE = 'getting-coffee'
 const IDLE_WANDERING = 'idle-wandering'
-const SLEEPING_WALKING = 'sleeping-walking'
 
-export type { RoomInteractionPoints, WalkableCenter } // NOSONAR
+export type { WalkableCenter } // NOSONAR
 
 // ─── Animation State Machine Hook ───────────────────────────────
 
@@ -79,22 +75,15 @@ function createDefaultAnimState(): AnimState {
  *
  * State transitions:
  *   active  → idle-wandering (with laptop, typing pauses)
- *   idle    → getting-coffee (if available, 50%) | idle-wandering (slow)
- *   sleeping → sleeping-walking → sleeping (crouch, ZZZ)
+ *   idle    → idle-wandering (slow random wander)
+ *   sleeping → sleeping (crouch in place, ZZZ)
  *   offline → frozen, faded
  */
 export function useBotAnimation(
   status: BotStatus,
-  interactionPoints: RoomInteractionPoints | null,
   _roomBounds: RoomBounds | undefined
 ): React.MutableRefObject<AnimState> {
   const stateRef = useRef<AnimState>(createDefaultAnimState())
-
-  // Per-bot random offsets so multiple bots don't stack on the same furniture
-  const jitter = useRef({
-    x: (Math.random() - 0.5) * 0.3,
-    z: (Math.random() - 0.5) * 0.3,
-  })
 
   // Track previous status to avoid unnecessary resets
   const prevStatusRef = useRef<string>(status)
@@ -102,15 +91,14 @@ export function useBotAnimation(
   // ─── React to status changes ────────────────────────────────
   useEffect(() => {
     const s = stateRef.current
-    const j = jitter.current
     prevStatusRef.current = status
 
     // Check if current animation phase is already compatible with the new status.
     // If so, skip the reset entirely — prevents jitter from status flickering.
     const phaseCompatible: Record<string, string[]> = {
       active: [], // Always reinitialize for active (need typing pause setup)
-      idle: [IDLE_WANDERING, GETTING_COFFEE],
-      sleeping: [SLEEPING_WALKING, 'sleeping'],
+      idle: [IDLE_WANDERING],
+      sleeping: ['sleeping'],
       offline: ['offline'],
     }
     const compatible = phaseCompatible[status] || []
@@ -162,28 +150,13 @@ export function useBotAnimation(
       }
 
       case 'idle': {
-        const hasCoffee = interactionPoints?.coffeePosition != null
-        const goCoffee = hasCoffee && Math.random() > 0.5
-
-        if (goCoffee && interactionPoints?.coffeePosition) {
-          s.phase = GETTING_COFFEE
-          s.targetX = interactionPoints.coffeePosition[0] + j.x * 0.5
-          s.targetZ = interactionPoints.coffeePosition[2] + j.z * 0.5
-          s.walkSpeed = SESSION_CONFIG.botWalkSpeedCoffee
-          s.freezeWhenArrived = true
-          s.arrived = false
-          s.coffeeTimer =
-            SESSION_CONFIG.coffeeMinTimeS +
-            Math.random() * (SESSION_CONFIG.coffeeMaxTimeS - SESSION_CONFIG.coffeeMinTimeS)
-        } else {
-          s.phase = IDLE_WANDERING
-          s.targetX = null
-          s.targetZ = null
-          s.walkSpeed = SESSION_CONFIG.botWalkSpeedIdle
-          s.freezeWhenArrived = false
-          s.arrived = false
-          s.resetWanderTarget = true
-        }
+        s.phase = IDLE_WANDERING
+        s.targetX = null
+        s.targetZ = null
+        s.walkSpeed = SESSION_CONFIG.botWalkSpeedIdle
+        s.freezeWhenArrived = false
+        s.arrived = false
+        s.resetWanderTarget = true
         s.bodyTilt = 0
         s.headBob = false
         s.opacity = 1
@@ -199,26 +172,17 @@ export function useBotAnimation(
       }
 
       case 'sleeping': {
-        if (interactionPoints) {
-          s.phase = SLEEPING_WALKING
-          s.targetX = interactionPoints.sleepCorner[0] + j.x * 0.3
-          s.targetZ = interactionPoints.sleepCorner[2] + j.z * 0.3
-          s.walkSpeed = SESSION_CONFIG.botWalkSpeedSleepWalk
-          s.freezeWhenArrived = true
-          s.arrived = false
-        } else {
-          // No interaction points — sleep in place
-          s.phase = 'sleeping'
-          s.targetX = null
-          s.targetZ = null
-          s.walkSpeed = 0
-          s.freezeWhenArrived = true
-          s.arrived = true
-          s.yOffset = -0.1
-          s.showZzz = true
-          s.sleepRotZ = 0.12
-          s.bodyTilt = -0.08
-        }
+        // Sleep in place — no walking to a sleep corner
+        s.phase = 'sleeping'
+        s.targetX = null
+        s.targetZ = null
+        s.walkSpeed = 0
+        s.freezeWhenArrived = true
+        s.arrived = true
+        s.yOffset = -0.1
+        s.showZzz = true
+        s.sleepRotZ = 0.12
+        s.bodyTilt = -0.08
         s.headBob = false
         s.opacity = 1
         s.coffeeTimer = 0
@@ -252,7 +216,7 @@ export function useBotAnimation(
         break
       }
     }
-  }, [status, interactionPoints])
+  }, [status])
 
   return stateRef
 }

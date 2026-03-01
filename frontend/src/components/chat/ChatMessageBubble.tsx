@@ -22,6 +22,13 @@ import { formatRelativeTime, formatShortTimestamp } from '@/lib/formatters'
 const BREAK_WORD = 'break-word'
 const FLEX_START = 'flex-start'
 
+function lastTextSegmentIndex(segments: { type: string }[]): number {
+  for (let i = segments.length - 1; i >= 0; i--) {
+    if (segments[i].type === 'text') return i
+  }
+  return -1
+}
+
 function safeJsonKey(value: unknown): string {
   if (value == null) return ''
   try {
@@ -514,25 +521,69 @@ function ZenMessageContent({
         </div>
       )}
 
-      {msg.tools && msg.tools.length > 0 && (
-        <div style={{ display: 'flex', flexDirection: 'column', gap: '4px', marginBottom: '4px' }}>
-          {msg.tools.map((tool) => (
-            <ToolCallBlock
-              key={`tool-${tool.name}-${tool.status}-${safeJsonKey(tool.input)}`}
-              tool={tool}
-              zenMode
-            />
-          ))}
-        </div>
-      )}
-
-      {(cleanText || msg.isStreaming) && (
-        <div className="zen-message-content">
-          {cleanText && <span dangerouslySetInnerHTML={{ __html: renderedHtml }} />}
-          {msg.isStreaming && (
-            <span style={{ animation: 'streaming-cursor-blink 0.6s step-end infinite' }}>▋</span>
+      {msg.contentSegments && msg.contentSegments.length > 0 ? (
+        <>
+          {msg.contentSegments.map((seg, i) => {
+            if (seg.type === 'tool' && seg.tool) {
+              return (
+                <ToolCallBlock
+                  key={`seg-${i}-${seg.tool.name}-${seg.tool.status}`}
+                  tool={seg.tool}
+                  zenMode
+                />
+              )
+            }
+            if (seg.type === 'text' && seg.text) {
+              const segClean = stripOpenClawTags(seg.text)
+              if (!segClean) return null
+              const segHtml = renderMarkdown(segClean)
+              const isLastText =
+                lastTextSegmentIndex(msg.contentSegments!) === i
+              return (
+                <div key={`seg-${i}`} className="zen-message-content">
+                  <span dangerouslySetInnerHTML={{ __html: segHtml }} />
+                  {msg.isStreaming && isLastText && (
+                    <span style={{ animation: 'streaming-cursor-blink 0.6s step-end infinite' }}>
+                      ▋
+                    </span>
+                  )}
+                </div>
+              )
+            }
+            return null
+          })}
+          {msg.isStreaming &&
+            msg.contentSegments[msg.contentSegments.length - 1]?.type !== 'text' && (
+              <span style={{ animation: 'streaming-cursor-blink 0.6s step-end infinite' }}>▋</span>
+            )}
+        </>
+      ) : (
+        <>
+          {msg.tools && msg.tools.length > 0 && (
+            <div
+              style={{ display: 'flex', flexDirection: 'column', gap: '4px', marginBottom: '4px' }}
+            >
+              {msg.tools.map((tool) => (
+                <ToolCallBlock
+                  key={`tool-${tool.name}-${tool.status}-${safeJsonKey(tool.input)}`}
+                  tool={tool}
+                  zenMode
+                />
+              ))}
+            </div>
           )}
-        </div>
+
+          {(cleanText || msg.isStreaming) && (
+            <div className="zen-message-content">
+              {cleanText && <span dangerouslySetInnerHTML={{ __html: renderedHtml }} />}
+              {msg.isStreaming && (
+                <span style={{ animation: 'streaming-cursor-blink 0.6s step-end infinite' }}>
+                  ▋
+                </span>
+              )}
+            </div>
+          )}
+        </>
       )}
     </div>
   )
@@ -620,42 +671,106 @@ function InlineMessageContent({
         </div>
       )}
 
-      {msg.tools && msg.tools.length > 0 && (
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 3, maxWidth: '100%' }}>
-          {msg.tools.map((tool) => (
-            <ToolCallBlock
-              key={`tool-${tool.name}-${tool.status}-${safeJsonKey(tool.input)}`}
-              tool={tool}
-              showDetails={showToolDetails}
-            />
-          ))}
-        </div>
-      )}
+      {msg.contentSegments && msg.contentSegments.length > 0 ? (
+        <>
+          {msg.contentSegments.map((seg, i) => {
+            if (seg.type === 'tool' && seg.tool) {
+              return (
+                <ToolCallBlock
+                  key={`seg-${i}-${seg.tool.name}-${seg.tool.status}`}
+                  tool={seg.tool}
+                  showDetails={showToolDetails}
+                />
+              )
+            }
+            if (seg.type === 'text' && seg.text) {
+              const segClean = stripOpenClawTags(seg.text)
+              if (!segClean) return null
+              const { codeBlockStyle: cbs, inlineCodeStyle: ics } = getCodeStyles(variant)
+              const segHtml = renderMarkdown(segClean, cbs, ics)
+              const isLastText =
+                lastTextSegmentIndex(msg.contentSegments!) === i
+              return (
+                <div
+                  key={`seg-${i}`}
+                  style={{
+                    padding: variant === 'mobile' ? '10px 14px' : '8px 12px',
+                    fontSize: variant === 'mobile' ? 14 : 13,
+                    lineHeight: 1.5,
+                    wordBreak: BREAK_WORD,
+                    overflowWrap: BREAK_WORD,
+                    maxWidth: '100%',
+                    ...bubbleStyle,
+                  }}
+                >
+                  <span dangerouslySetInnerHTML={{ __html: segHtml }} />
+                  {msg.isStreaming && isLastText && (
+                    <span
+                      style={{
+                        display: 'inline',
+                        animation: 'streaming-cursor-blink 0.6s step-end infinite',
+                      }}
+                    >
+                      ▋
+                    </span>
+                  )}
+                </div>
+              )
+            }
+            return null
+          })}
+          {msg.isStreaming &&
+            msg.contentSegments[msg.contentSegments.length - 1]?.type !== 'text' && (
+              <span
+                style={{
+                  display: 'inline',
+                  animation: 'streaming-cursor-blink 0.6s step-end infinite',
+                }}
+              >
+                ▋
+              </span>
+            )}
+        </>
+      ) : (
+        <>
+          {msg.tools && msg.tools.length > 0 && (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 3, maxWidth: '100%' }}>
+              {msg.tools.map((tool) => (
+                <ToolCallBlock
+                  key={`tool-${tool.name}-${tool.status}-${safeJsonKey(tool.input)}`}
+                  tool={tool}
+                  showDetails={showToolDetails}
+                />
+              ))}
+            </div>
+          )}
 
-      {(cleanText || msg.isStreaming) && (
-        <div
-          style={{
-            padding: variant === 'mobile' ? '10px 14px' : '8px 12px',
-            fontSize: variant === 'mobile' ? 14 : 13,
-            lineHeight: 1.5,
-            wordBreak: BREAK_WORD,
-            overflowWrap: BREAK_WORD,
-            maxWidth: '100%',
-            ...bubbleStyle,
-          }}
-        >
-          {cleanText && <span dangerouslySetInnerHTML={{ __html: renderedHtml }} />}
-          {msg.isStreaming && (
-            <span
+          {(cleanText || msg.isStreaming) && (
+            <div
               style={{
-                display: 'inline',
-                animation: 'streaming-cursor-blink 0.6s step-end infinite',
+                padding: variant === 'mobile' ? '10px 14px' : '8px 12px',
+                fontSize: variant === 'mobile' ? 14 : 13,
+                lineHeight: 1.5,
+                wordBreak: BREAK_WORD,
+                overflowWrap: BREAK_WORD,
+                maxWidth: '100%',
+                ...bubbleStyle,
               }}
             >
-              ▋
-            </span>
+              {cleanText && <span dangerouslySetInnerHTML={{ __html: renderedHtml }} />}
+              {msg.isStreaming && (
+                <span
+                  style={{
+                    display: 'inline',
+                    animation: 'streaming-cursor-blink 0.6s step-end infinite',
+                  }}
+                >
+                  ▋
+                </span>
+              )}
+            </div>
           )}
-        </div>
+        </>
       )}
 
       {imageAttachments.length > 0 && (
@@ -777,6 +892,7 @@ const ChatMessageBubbleInner = memo(
       prev.msg.content === next.msg.content &&
       prev.msg.isStreaming === next.msg.isStreaming &&
       prev.msg.tools === next.msg.tools &&
+      prev.msg.contentSegments === next.msg.contentSegments &&
       prev.msg.thinking === next.msg.thinking &&
       prev.variant === next.variant &&
       prev.accentColor === next.accentColor &&

@@ -10,7 +10,6 @@ import {
   isWalkableAt,
   pickWalkableDir,
   handleNoGridWander,
-  handleAnimTargetWalk,
   handleRandomGridWalk,
 } from '@/components/world3d/botMovement'
 import { meetingGatheringState } from '@/lib/meetingStore'
@@ -44,7 +43,7 @@ describe('botMovement utilities', () => {
   })
 
   it('calculates bounce per phase', () => {
-    expect(calculateBounceY('getting-coffee', true, false, false, 1)).not.toBe(0)
+    expect(calculateBounceY('idle-wandering', true, false, false, 1)).not.toBe(0)
     expect(calculateBounceY('idle-wandering', true, true, true, 1)).not.toBe(0)
     expect(calculateBounceY('offline', true, false, false, 1)).toBe(0)
   })
@@ -118,31 +117,6 @@ describe('botMovement utilities', () => {
     const anim2 = { arrived: false, freezeWhenArrived: false, typingPause: false }
     const handled = handleNoGridWander(g, s2, anim2, false, null, 0, 0, 1, 0.2, 'k2')
     expect(handled).toBe(false)
-    expect(s2.currentX).toBeGreaterThan(0)
-  })
-
-  it('handles anim target walk for arrive and far-path branches', () => {
-    const g = new THREE.Group()
-    const s = { currentX: 0, currentZ: 0, targetX: 0.1, targetZ: 0.1 }
-    const anim = { arrived: false, freezeWhenArrived: true }
-    handleAnimTargetWalk(g, s, anim, gridData, roomBounds, {
-      roomCenterX: 0,
-      roomCenterZ: 0,
-      speed: 1,
-      delta: 0.1,
-      sessionKey: 'x',
-    })
-    expect(anim.arrived).toBe(true)
-
-    const s2 = { currentX: 0, currentZ: 0, targetX: 4, targetZ: 0 }
-    const anim2 = { arrived: false, freezeWhenArrived: false }
-    handleAnimTargetWalk(g, s2, anim2, gridData, roomBounds, {
-      roomCenterX: 0,
-      roomCenterZ: 0,
-      speed: 1,
-      delta: 0.2,
-      sessionKey: 'x',
-    })
     expect(s2.currentX).toBeGreaterThan(0)
   })
 
@@ -226,12 +200,6 @@ describe('botMovement utilities', () => {
 
     // idle-wandering isMoving=false → 0
     expect(calculateBounceY('idle-wandering', false, true, false, 1)).toBe(0)
-
-    // sleeping-walking isMoving=false → 0
-    expect(calculateBounceY('sleeping-walking', false, false, false, 1)).toBe(0)
-
-    // getting-coffee, isMoving=true → non-zero
-    expect(calculateBounceY('getting-coffee', true, false, false, 1)).not.toBe(0)
   })
 
   it('isWalkableAt returns true when gridData is null (open world)', () => {
@@ -294,22 +262,6 @@ describe('botMovement utilities', () => {
     // dist > 0.4, typingPause=true → should not move
     handleNoGridWander(g, s, anim, false, null, 0, 0, 1, 0.1, undefined)
     expect(s.currentX).toBe(0) // not moved
-  })
-
-  it('handleAnimTargetWalk close-path branch (dist < 0.8)', () => {
-    const g = new THREE.Group()
-    const s = { currentX: 0, currentZ: 0, targetX: 0.5, targetZ: 0 }
-    const anim = { arrived: false, freezeWhenArrived: false }
-    handleAnimTargetWalk(g, s, anim, gridData, roomBounds, {
-      roomCenterX: 0,
-      roomCenterZ: 0,
-      speed: 1,
-      delta: 0.1,
-      sessionKey: undefined,
-    })
-    // dist=0.5 → close path, direct move
-    expect(s.currentX).toBeGreaterThan(0)
-    expect(anim.arrived).toBe(false)
   })
 
   it('handleRandomGridWalk wait timer ticking', () => {

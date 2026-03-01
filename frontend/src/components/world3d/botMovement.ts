@@ -42,9 +42,6 @@ export function calculateBounceY(
   t: number
 ): number {
   switch (phase) {
-    case 'getting-coffee':
-    case 'sleeping-walking':
-      return isMoving ? Math.sin(t * 4) * 0.03 : 0
     case 'idle-wandering':
       if (isActiveWalking && !typingPause) {
         return isMoving ? Math.sin(t * 3.5) * 0.025 : 0
@@ -383,86 +380,6 @@ export function handleNoGridWander( // NOSONAR: circular wandering with wait/mov
     smoothRotateY(group, Math.atan2(dx, dz), 0.2)
   }
   return false
-}
-
-export interface AnimWalkOptions {
-  roomCenterX: number
-  roomCenterZ: number
-  speed: number
-  delta: number
-  sessionKey: string | undefined
-}
-
-/** Handle walking toward animation target (coffee/sleep) with grid-snapped pathfinding */
-export function handleAnimTargetWalk(
-  group: THREE.Group,
-  state: {
-    currentX: number
-    currentZ: number
-    targetX: number
-    targetZ: number
-  },
-  anim: {
-    arrived: boolean
-    freezeWhenArrived: boolean
-  },
-  gridData: {
-    blueprint: { cellSize: number; gridWidth: number; gridDepth: number }
-    botWalkableMask: boolean[][]
-  },
-  roomBounds: { minX: number; maxX: number; minZ: number; maxZ: number },
-  opts: AnimWalkOptions
-): void {
-  const dx = state.targetX - state.currentX
-  const dz = state.targetZ - state.currentZ
-  const dist = Math.hypot(dx, dz)
-
-  if (dist < 0.4) {
-    anim.arrived = true
-    if (anim.freezeWhenArrived) {
-      group.position.x = state.currentX
-      group.position.z = state.currentZ
-      updatePositionRegistry(opts.sessionKey, state.currentX, group.position.y, state.currentZ)
-    }
-    return
-  }
-
-  if (dist < 0.8) {
-    // Close to target — direct linear movement
-    const easedSpeed = opts.speed * Math.min(1, dist / 0.5)
-    const step = Math.min(easedSpeed * opts.delta, dist)
-    state.currentX += (dx / dist) * step
-    state.currentZ += (dz / dist) * step
-  } else {
-    // Far from target — grid-snapped direction picking
-    const cellSize = gridData.blueprint.cellSize
-    const ndx = dx / dist
-    const ndz = dz / dist
-
-    let bestDir: { x: number; z: number } | null = null
-    let bestScore = -Infinity
-    for (const d of DIRECTIONS) {
-      const nextX = state.currentX + d.x * cellSize
-      const nextZ = state.currentZ + d.z * cellSize
-      if (!isWalkableAt(nextX, nextZ, roomBounds, gridData, opts.roomCenterX, opts.roomCenterZ))
-        continue
-      const score = d.x * ndx + d.z * ndz
-      if (score > bestScore) {
-        bestScore = score
-        bestDir = d
-      }
-    }
-
-    if (bestDir) {
-      const easedSpeed = opts.speed * Math.min(1, dist / 0.5)
-      const step = Math.min(easedSpeed * opts.delta, dist)
-      const dirMag = Math.hypot(bestDir.x, bestDir.z)
-      state.currentX += (bestDir.x / dirMag) * step
-      state.currentZ += (bestDir.z / dirMag) * step
-    }
-  }
-
-  smoothRotateY(group, Math.atan2(dx, dz), 0.18)
 }
 
 export interface GridWalkOptions {

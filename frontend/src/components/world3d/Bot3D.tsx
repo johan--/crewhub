@@ -15,7 +15,7 @@ import { SleepingZs, useBotAnimation } from './BotAnimations'
 import { BotSpeechBubble } from './BotSpeechBubble'
 import { meetingGatheringState } from '@/lib/meetingStore'
 import { tickAnimState } from './botAnimTick'
-import { getRoomInteractionPoints, getWalkableCenter } from './roomInteractionPoints'
+import { getWalkableCenter } from './roomInteractionPoints'
 import { getBlueprintForRoom, getWalkableMask, worldToGrid, gridToWorld } from '@/lib/grid'
 import { useWorldFocus } from '@/contexts/WorldFocusContext'
 import { useDragActions } from '@/contexts/DragDropContext'
@@ -29,7 +29,6 @@ import {
   applyOpacity,
   handleMeetingMovement,
   handleNoGridWander,
-  handleAnimTargetWalk,
   handleRandomGridWalk,
   handlePathFollowing,
   computeBotRepulsion,
@@ -250,15 +249,6 @@ export const Bot3D = memo(function Bot3D({
     ? `${roomBounds.minX},${roomBounds.maxX},${roomBounds.minZ},${roomBounds.maxZ}`
     : ''
 
-  const interactionPoints = useMemo(() => {
-    if (!roomName || !roomBounds) return null
-    const roomCenterX = (roomBounds.minX + roomBounds.maxX) / 2
-    const roomCenterZ = (roomBounds.minZ + roomBounds.maxZ) / 2
-    const roomSize = roomBounds.maxX - roomBounds.minX + 5 // re-add margin (2.5 × 2)
-    return getRoomInteractionPoints(roomName, roomSize, [roomCenterX, 0, roomCenterZ])
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [roomName, roomBoundsKey])
-
   const walkableCenter = useMemo(() => {
     if (!roomName || !roomBounds) return null
     const roomCenterX = (roomBounds.minX + roomBounds.maxX) / 2
@@ -268,7 +258,7 @@ export const Bot3D = memo(function Bot3D({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [roomName, roomBoundsKey])
 
-  const animRef = useBotAnimation(status, interactionPoints, roomBounds)
+  const animRef = useBotAnimation(status, roomBounds)
   const lastAppliedOpacity = useRef(1)
   const materialsClonable = useRef(false) // track if materials have been cloned for this bot
   const hasInitialized = useRef(false) // skip interpolation on first frame
@@ -398,36 +388,13 @@ export const Bot3D = memo(function Bot3D({
       anim.resetWanderTarget = false
     }
 
-    // Override wander target from animation system (coffee, sleep)
-    // Clamp targets to room bounds — interaction points (coffee machines,
-    // sleep corners) can be at grid positions outside the room bounds margin,
-    // making them unreachable. Without clamping, bots walk to the boundary
-    // edge and get stuck permanently (never arriving within 0.4 of target).
-    const hasAnimTarget = anim.targetX !== null && anim.targetZ !== null
-    if (hasAnimTarget) {
-      if (roomBounds) {
-        const inset = 0.3 // small inset so arrival check (dist < 0.4) succeeds
-        state.targetX = Math.max(
-          roomBounds.minX + inset,
-          Math.min(roomBounds.maxX - inset, anim.targetX!)
-        )
-        state.targetZ = Math.max(
-          roomBounds.minZ + inset,
-          Math.min(roomBounds.maxZ - inset, anim.targetZ!)
-        )
-      } else {
-        state.targetX = anim.targetX!
-        state.targetZ = anim.targetZ!
-      }
-    }
-
     if (!gridData) {
       // No grid (parking bots) — direct circular wander
       const freeze = handleNoGridWander(
         groupRef.current,
         state,
         anim,
-        hasAnimTarget,
+        false, // no animation targets — always random wander
         walkableCenter,
         roomCenterX,
         roomCenterZ,
@@ -436,16 +403,6 @@ export const Bot3D = memo(function Bot3D({
         session?.key
       )
       if (freeze) return
-    } else if (hasAnimTarget && !anim.arrived) {
-      // Walking toward animation target (coffee/sleep)
-      handleAnimTargetWalk(groupRef.current, state, anim, gridData, roomBounds, {
-        roomCenterX,
-        roomCenterZ,
-        speed,
-        delta,
-        sessionKey: session?.key,
-      })
-      if (anim.arrived && anim.freezeWhenArrived) return
     } else if (anim.typingPause) {
       // Typing pause: stay in place, keep rotating toward direction
       if (state.stepsRemaining > 0) {
