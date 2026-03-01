@@ -24,6 +24,39 @@ from .claude_transcript_parser import (
 
 logger = logging.getLogger(__name__)
 
+
+def _humanize_tool(tool_name: str, input_data: dict) -> str:
+    """Short human-readable description of a tool use."""
+    if tool_name in ("Read", "read"):
+        fp = input_data.get("file_path", input_data.get("path", ""))
+        return f"Reading {Path(fp).name}" if fp else "Reading file"
+    if tool_name in ("Edit", "edit"):
+        fp = input_data.get("file_path", "")
+        return f"Editing {Path(fp).name}" if fp else "Editing file"
+    if tool_name in ("Write", "write"):
+        fp = input_data.get("file_path", "")
+        return f"Writing {Path(fp).name}" if fp else "Writing file"
+    if tool_name in ("Bash", "bash", "exec"):
+        cmd = input_data.get("command", "")
+        return f"Running: {cmd[:60]}" if cmd else "Running command"
+    if tool_name in ("Grep", "grep"):
+        pat = input_data.get("pattern", "")
+        return f"Searching: {pat[:40]}" if pat else "Searching"
+    if tool_name in ("Glob", "glob"):
+        pat = input_data.get("pattern", "")
+        return f"Finding: {pat[:40]}" if pat else "Finding files"
+    if tool_name in ("Agent", "Task"):
+        desc = input_data.get("description", input_data.get("prompt", ""))
+        return f"Subagent: {desc[:40]}" if desc else "Spawning subagent"
+    if tool_name in ("WebSearch", "web_search"):
+        q = input_data.get("query", "")
+        return f"Searching: {q[:40]}" if q else "Web search"
+    if tool_name in ("WebFetch", "web_fetch"):
+        url = input_data.get("url", "")
+        return f"Fetching: {url[:40]}" if url else "Fetching URL"
+    return f"Using {tool_name}"
+
+
 # Timing constants
 SESSION_SCAN_INTERVAL_MS = 1000
 FILE_POLL_INTERVAL_MS = 1000
@@ -46,6 +79,9 @@ class WatchedSession:
     project_name: Optional[str] = None
     is_subagent: bool = False
     project_path: Optional[str] = None
+    parent_session_uuid: Optional[str] = None  # UUID of parent session (for subagents)
+    activity_detail: Optional[str] = None
+    activity_tool_name: Optional[str] = None
 
 
 class ClaudeSessionWatcher:
@@ -126,18 +162,19 @@ class ClaudeSessionWatcher:
             return []
         return [d for d in self.projects_dir.iterdir() if d.is_dir()]
 
-    def discover_sessions(self, project_dir: Path) -> list[tuple[str, Path, bool]]:
+    def discover_sessions(self, project_dir: Path) -> list[tuple[str, Path, bool, Optional[str]]]:
         """Discover JSONL session files. Supports old (flat) and new (nested UUID dir) formats.
 
-        Returns list of (session_id, jsonl_path, is_subagent) tuples.
+        Returns list of (session_id, jsonl_path, is_subagent, parent_session_uuid) tuples.
+        parent_session_uuid is set for subagents so they can inherit the parent's room.
         """
-        sessions: list[tuple[str, Path, bool]] = []
+        sessions: list[tuple[str, Path, bool, Optional[str]]] = []
         try:
             for entry in os.scandir(project_dir):
                 if entry.is_file() and entry.name.endswith(".jsonl"):
                     # Old format: <project>/<session-id>.jsonl
                     session_id = entry.name[:-6]
-                    sessions.append((session_id, Path(entry.path), False))
+                    sessions.append((session_id, Path(entry.path), False, None))
                 elif entry.is_dir():
                     # New format: <project>/<session-uuid>/
                     session_uuid = entry.name
@@ -151,7 +188,7 @@ class ClaudeSessionWatcher:
         self,
         session_uuid: str,
         session_dir: Path,
-        sessions: list[tuple[str, Path, bool]],
+        sessions: list[tuple[str, Path, bool, Optional[str]]],
     ) -> None:
         """Scan a session UUID directory for JSONL files (direct + subagents/)."""
         try:
@@ -159,14 +196,14 @@ class ClaudeSessionWatcher:
                 if entry.is_file() and entry.name.endswith(".jsonl"):
                     stem = entry.name[:-6]
                     session_id = f"{session_uuid[:8]}-{stem}" if stem != session_uuid else session_uuid
-                    sessions.append((session_id, Path(entry.path), False))
+                    sessions.append((session_id, Path(entry.path), False, None))
                 elif entry.is_dir() and entry.name == "subagents":
                     try:
                         for sub_entry in os.scandir(entry.path):
                             if sub_entry.is_file() and sub_entry.name.endswith(".jsonl"):
                                 stem = sub_entry.name[:-6]
                                 session_id = f"{session_uuid[:8]}-{stem}"
-                                sessions.append((session_id, Path(sub_entry.path), True))
+                                sessions.append((session_id, Path(sub_entry.path), True, session_uuid))
                     except OSError:
                         pass
         except OSError:
@@ -214,7 +251,13 @@ class ClaudeSessionWatcher:
             pass
         return 0.0
 
-    def watch_session(self, session_id: str, jsonl_path: Path, is_subagent: bool = False):
+    def watch_session(
+        self,
+        session_id: str,
+        jsonl_path: Path,
+        is_subagent: bool = False,
+        parent_session_uuid: Optional[str] = None,
+    ):
         if session_id not in self._watched:
             offset = jsonl_path.stat().st_size if jsonl_path.exists() else 0
             wall_time = self._peek_last_timestamp(jsonl_path) if jsonl_path.exists() else 0.0
@@ -225,6 +268,7 @@ class ClaudeSessionWatcher:
                 last_event_time=wall_time,
                 last_event_wall_time=wall_time,
                 is_subagent=is_subagent,
+                parent_session_uuid=parent_session_uuid,
             )
 
     def unwatch_session(self, session_id: str):
@@ -271,11 +315,11 @@ class ClaudeSessionWatcher:
 
                 found_new = False
                 for project_dir in self.discover_project_dirs():
-                    for session_id, jsonl_path, is_subagent in self.discover_sessions(project_dir):
+                    for session_id, jsonl_path, is_subagent, parent_uuid in self.discover_sessions(project_dir):
                         path_key = str(jsonl_path)
                         if path_key not in self._known_jsonl_files:
                             self._known_jsonl_files.add(path_key)
-                            self.watch_session(session_id, jsonl_path, is_subagent)
+                            self.watch_session(session_id, jsonl_path, is_subagent, parent_uuid)
                             found_new = True
                 if found_new and self.on_sessions_changed:
                     self.on_sessions_changed()
@@ -346,6 +390,8 @@ class ClaudeSessionWatcher:
                 ws.pending_tool_uses.add(event.tool_use_id)
                 ws.has_pending_tools = True
                 ws.last_activity = AgentActivity.TOOL_USE
+                ws.activity_tool_name = event.tool_name
+                ws.activity_detail = _humanize_tool(event.tool_name, event.input_data)
                 if event.is_task_tool:
                     ws.active_subagents[event.tool_use_id] = {
                         "description": event.input_data.get("description", ""),
@@ -358,8 +404,12 @@ class ClaudeSessionWatcher:
                 ws.pending_tool_uses.clear()
                 ws.has_pending_tools = False
                 ws.last_activity = AgentActivity.WAITING_INPUT
+                ws.activity_detail = None
+                ws.activity_tool_name = None
             elif isinstance(event, AssistantTextEvent):
                 ws.last_activity = AgentActivity.RESPONDING
+                ws.activity_detail = None
+                ws.activity_tool_name = None
                 if not ws.has_pending_tools:
                     ws.last_text_only_time = time.monotonic()
             elif isinstance(event, ProjectContextEvent):

@@ -12,6 +12,32 @@ export interface SessionsStreamState {
 }
 
 const POLLING_INTERVAL_MS = 5_000
+const CACHE_KEY = 'crewhub-sessions-cache'
+const CACHE_MAX_AGE_MS = 60 * 60 * 1000 // 1 hour
+const CACHE_DEBOUNCE_MS = 2_000
+
+/** Read cached sessions from localStorage, ignoring stale or corrupt data. */
+function readCachedSessions(): CrewSession[] | null {
+  try {
+    const raw = localStorage.getItem(CACHE_KEY)
+    if (!raw) return null
+    const parsed = JSON.parse(raw) as { sessions: CrewSession[]; savedAt: number }
+    if (Date.now() - parsed.savedAt > CACHE_MAX_AGE_MS) return null
+    if (!Array.isArray(parsed.sessions) || parsed.sessions.length === 0) return null
+    return parsed.sessions
+  } catch {
+    return null
+  }
+}
+
+/** Save sessions to localStorage (called on a debounce). */
+function writeCachedSessions(sessions: CrewSession[]): void {
+  try {
+    localStorage.setItem(CACHE_KEY, JSON.stringify({ sessions, savedAt: Date.now() }))
+  } catch {
+    // Storage full or unavailable — silently skip
+  }
+}
 
 /**
  * Compute a lightweight fingerprint of sessions data.
@@ -130,13 +156,16 @@ function handleSSEStateChange(
 }
 
 export function useSessionsStream(enabled: boolean = true) {
-  const [state, setState] = useState<SessionsStreamState>({
-    sessions: [],
-    loading: true,
-    error: null,
-    connected: false,
-    connectionMethod: 'disconnected',
-    reconnecting: false,
+  const [state, setState] = useState<SessionsStreamState>(() => {
+    const cached = enabled ? readCachedSessions() : null
+    return {
+      sessions: cached ?? [],
+      loading: true,
+      error: null,
+      connected: false,
+      connectionMethod: 'disconnected',
+      reconnecting: false,
+    }
   })
 
   const pollingTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null)
@@ -304,7 +333,30 @@ export function useSessionsStream(enabled: boolean = true) {
 
     const handleSessionUpdated = (event: MessageEvent) => {
       try {
-        const updatedSession: CrewSession = JSON.parse(event.data)
+        const data = JSON.parse(event.data)
+
+        // Thin CC activity update: merge into existing session instead of replacing
+        if (data.source === 'claude_code' && data.sessionKey && !data.key) {
+          setState((prev) => {
+            const idx = prev.sessions.findIndex((s) => s.key === data.sessionKey)
+            if (idx === -1) return prev
+            const updated = { ...prev.sessions[idx] }
+            if (data.status) updated.status = data.status
+            if (data.activity_detail !== undefined)
+              updated.activityDetail = data.activity_detail || undefined
+            if (data.activity_tool_name !== undefined)
+              updated.activityToolName = data.activity_tool_name || undefined
+            updated.updatedAt = Date.now()
+            const newSessions = [...prev.sessions]
+            newSessions[idx] = updated
+            sessionsFingerprintRef.current = computeSessionsFingerprint(newSessions)
+            return { ...prev, sessions: newSessions }
+          })
+          return
+        }
+
+        // Full session update (from polling/OpenClaw) — existing logic
+        const updatedSession: CrewSession = data
         // Accumulate updates and flush at most every 100ms to prevent
         // high-frequency SSE bursts from triggering per-event React re-renders.
         pendingUpdatesRef.current.set(updatedSession.key, updatedSession)
@@ -351,6 +403,13 @@ export function useSessionsStream(enabled: boolean = true) {
       pendingUpdates.clear()
     }
   }, [enabled])
+
+  // Debounce-save sessions to localStorage for instant restore on reload
+  useEffect(() => {
+    if (!enabled || state.sessions.length === 0) return
+    const timer = setTimeout(() => writeCachedSessions(state.sessions), CACHE_DEBOUNCE_MS)
+    return () => clearTimeout(timer)
+  }, [enabled, state.sessions])
 
   const refresh = useCallback(async () => {
     setState((prev) => ({ ...prev, loading: true }))

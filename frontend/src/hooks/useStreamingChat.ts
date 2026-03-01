@@ -6,7 +6,7 @@
  */
 
 import { useState, useCallback, useRef, useEffect } from 'react'
-import { streamMessage } from '@/services/chatStreamService'
+import { streamMessage, type QuestionData, type ToolEventData } from '@/services/chatStreamService'
 import { API_BASE } from '@/lib/api'
 import { sseManager } from '@/lib/sseManager'
 
@@ -18,6 +18,12 @@ export interface ToolCallData {
   result?: string
 }
 
+export interface ContentSegment {
+  type: 'text' | 'tool'
+  text?: string
+  tool?: ToolCallData
+}
+
 export interface ChatMessageData {
   id: string
   role: 'user' | 'assistant' | 'system'
@@ -27,6 +33,8 @@ export interface ChatMessageData {
   tools?: ToolCallData[]
   thinking?: string[] // Thinking blocks when raw mode enabled
   isStreaming?: boolean
+  /** Ordered segments for interleaved tool/text rendering */
+  contentSegments?: ContentSegment[]
 }
 
 export interface UseStreamingChatReturn {
@@ -39,6 +47,8 @@ export interface UseStreamingChatReturn {
   hasMore: boolean
   isLoadingHistory: boolean
   loadOlderMessages: () => Promise<void>
+  /** Questions from the agent (AskUserQuestion) waiting for user reply */
+  pendingQuestions: QuestionData[] | null
 }
 
 const THROTTLE_MS = 80
@@ -46,9 +56,11 @@ const THROTTLE_MS = 80
 // ── Module-level message-state updater factories ──────────────────────────────
 // Extracted to module level to reduce setState callback nesting depth below 4 levels.
 
-function makeStreamingDoneUpdater(id: string, content: string) {
+function makeStreamingDoneUpdater(id: string, content: string, segments?: ContentSegment[]) {
   return (prev: ChatMessageData[]): ChatMessageData[] =>
-    prev.map((m) => (m.id === id ? { ...m, content, isStreaming: false } : m))
+    prev.map((m) =>
+      m.id === id ? { ...m, content, contentSegments: segments, isStreaming: false } : m
+    )
 }
 
 function makeRemoveStreamingMessage(id: string) {
@@ -89,6 +101,7 @@ export function useStreamingChat(
   const [error, setError] = useState<string | null>(null)
   const [hasMore, setHasMore] = useState(false)
   const [isLoadingHistory, setIsLoadingHistory] = useState(false)
+  const [pendingQuestions, setPendingQuestions] = useState<QuestionData[] | null>(null)
 
   const messagesRef = useRef<ChatMessageData[]>([])
   const abortRef = useRef<AbortController | null>(null)
@@ -98,6 +111,7 @@ export function useStreamingChat(
   const pendingContentRef = useRef<string>('')
   const throttleTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const streamingIdRef = useRef<string | null>(null)
+  const segmentsRef = useRef<ContentSegment[]>([])
 
   // Load history
   const loadHistory = useCallback(
@@ -171,7 +185,12 @@ export function useStreamingChat(
     const id = streamingIdRef.current
     const content = pendingContentRef.current
     if (!id) return
-    setMessages((prev) => prev.map((m) => (m.id === id ? { ...m, content, isStreaming: true } : m)))
+    const segments = segmentsRef.current.map((s) => ({ ...s }))
+    setMessages((prev) =>
+      prev.map((m) =>
+        m.id === id ? { ...m, content, contentSegments: segments, isStreaming: true } : m
+      )
+    )
   }, [])
 
   const sendMessage = useCallback(
@@ -197,6 +216,7 @@ export function useStreamingChat(
       const assistantId = `assistant-stream-${Date.now()}`
       streamingIdRef.current = assistantId
       pendingContentRef.current = ''
+      segmentsRef.current = []
 
       const assistantMsg: ChatMessageData = {
         id: assistantId,
@@ -212,9 +232,18 @@ export function useStreamingChat(
       setStreamingMessageId(assistantId)
       setError(null)
 
+      setPendingQuestions(null)
       abortRef.current = streamMessage(sessionKey, trimmed, roomId, {
         onChunk: (chunk: string) => {
           pendingContentRef.current += chunk
+          // Update segments: extend last text segment or create a new one
+          const segs = segmentsRef.current
+          const last = segs[segs.length - 1]
+          if (last && last.type === 'text') {
+            last.text = (last.text || '') + chunk
+          } else {
+            segs.push({ type: 'text', text: chunk })
+          }
           // Throttle state updates
           if (!throttleTimerRef.current) {
             throttleTimerRef.current = setTimeout(() => {
@@ -222,6 +251,32 @@ export function useStreamingChat(
               flushPendingContent()
             }, THROTTLE_MS)
           }
+        },
+        onTool: (tool: ToolEventData) => {
+          const id = streamingIdRef.current
+          if (!id) return
+          const toolData: ToolCallData = {
+            name: tool.name,
+            status: tool.status,
+            label: tool.label,
+          }
+          segmentsRef.current.push({ type: 'tool', tool: toolData })
+          // Immediate update (tool chips should appear instantly)
+          const segments = segmentsRef.current.map((s) => ({ ...s }))
+          const content = pendingContentRef.current
+          setMessages((prev) =>
+            prev.map((m) =>
+              m.id === id
+                ? {
+                    ...m,
+                    tools: [...(m.tools || []), toolData],
+                    content,
+                    contentSegments: segments,
+                    isStreaming: true,
+                  }
+                : m
+            )
+          )
         },
         onDone: () => {
           // Cancel any pending throttle timer so it can't fire after we clear the ref
@@ -232,14 +287,16 @@ export function useStreamingChat(
           // Capture final content and id BEFORE clearing refs
           const finalContent = pendingContentRef.current
           const id = streamingIdRef.current
+          const finalSegments = segmentsRef.current.map((s) => ({ ...s }))
           // Single state update: set full content + mark streaming done
           if (id) {
-            setMessages(makeStreamingDoneUpdater(id, finalContent))
+            setMessages(makeStreamingDoneUpdater(id, finalContent, finalSegments))
           }
           setIsSending(false)
           setStreamingMessageId(null)
           streamingIdRef.current = null
           pendingContentRef.current = ''
+          segmentsRef.current = []
         },
         onError: (err: string) => {
           void (async () => {
@@ -250,6 +307,7 @@ export function useStreamingChat(
             }
             streamingIdRef.current = null
             pendingContentRef.current = ''
+            segmentsRef.current = []
 
             // Fallback: blocking send (async/await avoids deeply nested .then() callbacks)
             if (fallbackAbortRef.current) fallbackAbortRef.current.abort()
@@ -274,6 +332,9 @@ export function useStreamingChat(
               setStreamingMessageId(null)
             }
           })()
+        },
+        onQuestion: (questions: QuestionData[]) => {
+          setPendingQuestions(questions)
         },
       })
     },
@@ -300,5 +361,6 @@ export function useStreamingChat(
     hasMore,
     isLoadingHistory,
     loadOlderMessages,
+    pendingQuestions,
   }
 }

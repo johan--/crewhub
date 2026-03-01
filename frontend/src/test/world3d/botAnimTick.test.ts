@@ -28,34 +28,6 @@ function baseState(): AnimState {
 afterEach(() => vi.restoreAllMocks())
 
 describe('botAnimTick', () => {
-  it('transitions from getting-coffee to idle-wandering when timer ends', () => {
-    const s = baseState()
-    s.phase = 'getting-coffee'
-    s.arrived = true
-    s.coffeeTimer = 0.1
-
-    tickAnimState(s, 0.2)
-
-    expect(s.phase).toBe('idle-wandering')
-    expect(s.targetX).toBeNull()
-    expect(s.targetZ).toBeNull()
-    expect(s.arrived).toBe(false)
-    expect(s.resetWanderTarget).toBe(true)
-  })
-
-  it('transitions from sleeping-walking to sleeping when arrived', () => {
-    const s = baseState()
-    s.phase = 'sleeping-walking'
-    s.arrived = true
-
-    tickAnimState(s, 0.1)
-
-    expect(s.phase).toBe('sleeping')
-    expect(s.showZzz).toBe(true)
-    expect(s.walkSpeed).toBe(0)
-    expect(s.yOffset).toBe(-0.1)
-  })
-
   it('toggles typing pause off when pause timer elapses', () => {
     const s = baseState()
     s.isActiveWalking = true

@@ -96,59 +96,89 @@ class TestNormalizeTimestamp:
 
 class TestExtractContentParts:
     def test_string_content(self):
-        parts, tools, thinking = _extract_content_parts("hello", False)
+        parts, tools, thinking, segments = _extract_content_parts("hello", False)
         assert parts == ["hello"]
         assert tools == []
+        assert segments == [{"type": "text", "text": "hello"}]
 
     def test_list_text_blocks(self):
         content = [{"type": "text", "text": "hi"}, {"type": "text", "text": "there"}]
-        parts, tools, thinking = _extract_content_parts(content, False)
+        parts, tools, thinking, segments = _extract_content_parts(content, False)
         assert parts == ["hi", "there"]
+        assert len(segments) == 2
+        assert segments[0] == {"type": "text", "text": "hi"}
 
     def test_tool_use_block(self):
         content = [{"type": "tool_use", "name": "read", "input": {"path": "/tmp"}}]
-        parts, tools, thinking = _extract_content_parts(content, False)
+        parts, tools, thinking, segments = _extract_content_parts(content, False)
         assert len(tools) == 1
         assert tools[0]["name"] == "read"
         assert tools[0]["status"] == "called"
         assert "input" not in tools[0]  # raw=False
+        assert segments[0]["type"] == "tool"
+        assert segments[0]["tool"]["name"] == "read"
 
     def test_tool_use_raw(self):
         content = [{"type": "tool_use", "name": "read", "input": {"path": "/tmp"}}]
-        parts, tools, thinking = _extract_content_parts(content, True)
+        parts, tools, thinking, segments = _extract_content_parts(content, True)
         assert tools[0]["input"] == {"path": "/tmp"}
 
     def test_tool_result_block(self):
         content = [{"type": "tool_result", "name": "read", "content": "data", "isError": False}]
-        _, tools, _ = _extract_content_parts(content, False)
+        _, tools, _, segments = _extract_content_parts(content, False)
         assert tools[0]["status"] == "done"
+        assert segments[0]["type"] == "tool"
 
     def test_tool_result_error(self):
         content = [{"type": "tool_result", "name": "read", "content": "err", "isError": True}]
-        _, tools, _ = _extract_content_parts(content, False)
+        _, tools, _, _ = _extract_content_parts(content, False)
         assert tools[0]["status"] == "error"
 
     def test_tool_result_raw_truncates(self):
         content = [{"type": "tool_result", "name": "x", "content": "a" * 600}]
-        _, tools, _ = _extract_content_parts(content, True)
+        _, tools, _, _ = _extract_content_parts(content, True)
         assert tools[0]["result"].endswith("...")
 
     def test_thinking_blocks(self):
         content = [{"type": "thinking", "thinking": "let me think"}]
-        _, _, thinking = _extract_content_parts(content, False)
+        _, _, thinking, segments = _extract_content_parts(content, False)
         assert thinking == ["let me think"]
+        assert segments == []  # thinking blocks don't appear in segments
 
     def test_string_in_list(self):
-        parts, _, _ = _extract_content_parts(["hello"], False)
+        parts, _, _, segments = _extract_content_parts(["hello"], False)
         assert parts == ["hello"]
+        assert segments == [{"type": "text", "text": "hello"}]
 
     def test_non_list_non_string(self):
-        parts, tools, thinking = _extract_content_parts(123, False)
+        parts, tools, thinking, segments = _extract_content_parts(123, False)
         assert parts == []
+        assert segments == []
 
     def test_non_dict_in_list(self):
-        parts, _, _ = _extract_content_parts([42], False)
+        parts, _, _, segments = _extract_content_parts([42], False)
         assert parts == []
+        assert segments == []
+
+    def test_interleaved_segments_order(self):
+        """Segments preserve the original order of text and tool blocks."""
+        content = [
+            {"type": "text", "text": "Let me check"},
+            {"type": "tool_use", "name": "Read", "input": {"file_path": "foo.py"}},
+            {"type": "tool_result", "name": "Read", "content": "data"},
+            {"type": "text", "text": "I see the issue"},
+        ]
+        parts, tools, _, segments = _extract_content_parts(content, False)
+        assert parts == ["Let me check", "I see the issue"]
+        assert len(tools) == 2
+        assert len(segments) == 4
+        assert segments[0] == {"type": "text", "text": "Let me check"}
+        assert segments[1]["type"] == "tool"
+        assert segments[1]["tool"]["name"] == "Read"
+        assert segments[1]["tool"]["status"] == "called"
+        assert segments[2]["type"] == "tool"
+        assert segments[2]["tool"]["status"] == "done"
+        assert segments[3] == {"type": "text", "text": "I see the issue"}
 
 
 class TestStripContextEnvelope:

@@ -34,7 +34,7 @@ interface AgentTopBarProps {
 type AgentStatus = 'active' | 'idle' | 'sleeping' | 'supervising' | 'offline'
 
 const BOSS_SESSION_KEY = 'agent:main:main'
-const PINNED_STORAGE_KEY = 'crewhub-pinned-agent'
+const PINNED_STORAGE_KEY = 'crewhub-pinned-agents'
 
 // ─── Helpers ───────────────────────────────────────────────────
 
@@ -509,7 +509,7 @@ interface DropdownEntry {
 interface AgentPickerDropdownProps {
   readonly fixedAgents: DropdownEntry[]
   readonly recentSubagents: DropdownEntry[]
-  readonly pinnedKey: string | null
+  readonly pinnedKeys: string[]
   readonly onSelect: (
     session: CrewSession,
     roomId: string,
@@ -523,7 +523,7 @@ interface AgentPickerDropdownProps {
 function AgentPickerDropdown({
   fixedAgents,
   recentSubagents,
-  pinnedKey,
+  pinnedKeys,
   onSelect,
   onPin,
   onClose,
@@ -598,7 +598,7 @@ function AgentPickerDropdown({
             <DropdownItem
               key={entry.session.key}
               entry={entry}
-              isPinned={entry.session.key === pinnedKey}
+              isPinned={pinnedKeys.includes(entry.session.key)}
               onSelect={onSelect}
               onPin={onPin}
             />
@@ -628,7 +628,7 @@ function AgentPickerDropdown({
             <DropdownItem
               key={entry.session.key}
               entry={entry}
-              isPinned={entry.session.key === pinnedKey}
+              isPinned={pinnedKeys.includes(entry.session.key)}
               onSelect={onSelect}
               onPin={onPin}
             />
@@ -798,26 +798,36 @@ export function AgentTopBar({
   const { state, focusBot } = useWorldFocus()
   const { openChat } = useChatContext()
   const [pickerOpen, setPickerOpen] = useState(false)
-  const [pinnedKey, setPinnedKey] = useState<string | null>(() => {
+  const [pinnedKeys, setPinnedKeys] = useState<string[]>(() => {
     try {
-      return localStorage.getItem(PINNED_STORAGE_KEY)
+      const raw = localStorage.getItem(PINNED_STORAGE_KEY)
+      if (!raw) {
+        // Migrate from old single-pin key
+        const legacy = localStorage.getItem('crewhub-pinned-agent')
+        if (legacy) return [legacy]
+        return []
+      }
+      const parsed = JSON.parse(raw)
+      return Array.isArray(parsed) ? parsed : []
     } catch {
-      return null
+      return []
     }
   })
 
-  // Persist pinned agent
+  // Persist pinned agents
   useEffect(() => {
     try {
-      if (pinnedKey) {
-        localStorage.setItem(PINNED_STORAGE_KEY, pinnedKey)
+      if (pinnedKeys.length > 0) {
+        localStorage.setItem(PINNED_STORAGE_KEY, JSON.stringify(pinnedKeys))
       } else {
         localStorage.removeItem(PINNED_STORAGE_KEY)
       }
+      // Clean up legacy key
+      localStorage.removeItem('crewhub-pinned-agent')
     } catch {
       // Ignore
     }
-  }, [pinnedKey])
+  }, [pinnedKeys])
 
   // ─── Boss session ──────────────────────────────────────────────
 
@@ -835,29 +845,31 @@ export function AgentTopBar({
 
   const bossIsActive = bossSession ? isActivelyRunning(bossSession.key) : false
 
-  // ─── Pinned agent ──────────────────────────────────────────────
+  // ─── Pinned agents ─────────────────────────────────────────────
 
-  const pinnedSession = useMemo(
-    () => (pinnedKey ? sessions.find((s) => s.key === pinnedKey) : null),
-    [sessions, pinnedKey]
-  )
-
-  const pinnedConfig = useMemo(
-    () => (pinnedSession ? getBotConfig(pinnedSession.key, pinnedSession.label) : null),
-    [getBotConfig, pinnedSession]
-  )
-
-  const pinnedRoomId = useMemo(() => {
-    if (!pinnedSession) return null
-    return getRoomId(pinnedSession, getRoomForSession, defaultRoomId)
-  }, [pinnedSession, getRoomForSession, defaultRoomId])
-
-  const pinnedName = useMemo(() => {
-    if (!pinnedSession) return ''
-    return getSessionDisplayName(pinnedSession, displayNames.get(pinnedSession.key))
-  }, [pinnedSession, displayNames])
-
-  const pinnedIsActive = pinnedSession ? isActivelyRunning(pinnedSession.key) : false
+  const pinnedAgentData = useMemo(() => {
+    return pinnedKeys
+      .map((key) => {
+        const session = sessions.find((s) => s.key === key)
+        if (!session) return null
+        return {
+          key,
+          session,
+          config: getBotConfig(session.key, session.label),
+          roomId: getRoomId(session, getRoomForSession, defaultRoomId),
+          name: getSessionDisplayName(session, displayNames.get(session.key) ?? undefined),
+          isActive: isActivelyRunning(session.key),
+        }
+      })
+      .filter(Boolean) as Array<{
+      key: string
+      session: CrewSession
+      config: BotVariantConfig
+      roomId: string
+      name: string
+      isActive: boolean
+    }>
+  }, [pinnedKeys, sessions, getBotConfig, getRoomForSession, defaultRoomId, displayNames, isActivelyRunning])
 
   // ─── Dropdown entries ──────────────────────────────────────────
 
@@ -893,15 +905,16 @@ export function AgentTopBar({
     openChat(BOSS_SESSION_KEY, 'Assistent', bossConfig.icon, bossConfig.color)
   }, [bossRoomId, focusBot, openChat, bossConfig])
 
-  const handlePinnedClick = useCallback(() => {
-    if (!pinnedSession || !pinnedRoomId || !pinnedConfig) return
-    focusBot(pinnedSession.key, pinnedRoomId)
-    // openChat is guarded by isFixedAgent internally, safe to call
-    openChat(pinnedSession.key, pinnedName, pinnedConfig.icon, pinnedConfig.color)
-  }, [pinnedSession, pinnedRoomId, pinnedConfig, pinnedName, focusBot, openChat])
+  const handlePinnedClick = useCallback(
+    (pinned: (typeof pinnedAgentData)[number]) => {
+      focusBot(pinned.session.key, pinned.roomId)
+      openChat(pinned.session.key, pinned.name, pinned.config.icon, pinned.config.color)
+    },
+    [focusBot, openChat]
+  )
 
-  const handleUnpin = useCallback(() => {
-    setPinnedKey(null)
+  const handleUnpin = useCallback((key: string) => {
+    setPinnedKeys((prev) => prev.filter((k) => k !== key))
   }, [])
 
   const handleDropdownSelect = useCallback(
@@ -917,7 +930,9 @@ export function AgentTopBar({
   )
 
   const handlePin = useCallback((sessionKey: string) => {
-    setPinnedKey(sessionKey)
+    setPinnedKeys((prev) =>
+      prev.includes(sessionKey) ? prev.filter((k) => k !== sessionKey) : [...prev, sessionKey]
+    )
     setPickerOpen(false)
   }, [])
 
@@ -932,7 +947,7 @@ export function AgentTopBar({
   // Hidden in first-person and bot-focus modes
   if (state.level === 'firstperson' || state.level === 'bot') return null
   // Hide when there are no sessions at all (no agents to show)
-  if (!bossSession && fixedAgents.length === 0 && recentSubagents.length === 0 && !pinnedSession)
+  if (!bossSession && fixedAgents.length === 0 && recentSubagents.length === 0 && pinnedAgentData.length === 0)
     return null
 
   return (
@@ -949,18 +964,19 @@ export function AgentTopBar({
         gap: 12,
       }}
     >
-      {/* Pinned agent (left of Assistent) */}
-      {pinnedSession && pinnedConfig && (
+      {/* Pinned agents (left of Assistent) */}
+      {pinnedAgentData.map((pinned) => (
         <AgentPortraitButton
-          config={pinnedConfig}
-          name={pinnedName}
-          isActive={pinnedIsActive}
-          onClick={handlePinnedClick}
-          title={`Fly to ${pinnedName}`}
+          key={pinned.key}
+          config={pinned.config}
+          name={pinned.name}
+          isActive={pinned.isActive}
+          onClick={() => handlePinnedClick(pinned)}
+          title={`Fly to ${pinned.name}`}
           showUnpin
-          onUnpin={handleUnpin}
+          onUnpin={() => handleUnpin(pinned.key)}
         />
-      )}
+      ))}
 
       {/* Assistent (center, visible when session exists) */}
       {bossSession && (
@@ -980,7 +996,7 @@ export function AgentTopBar({
           <AgentPickerDropdown
             fixedAgents={fixedAgents}
             recentSubagents={recentSubagents}
-            pinnedKey={pinnedKey}
+            pinnedKeys={pinnedKeys}
             onSelect={handleDropdownSelect}
             onPin={handlePin}
             onClose={handleDropdownClose}

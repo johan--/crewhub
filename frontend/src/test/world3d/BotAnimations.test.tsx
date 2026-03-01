@@ -16,7 +16,7 @@ describe('BotAnimations', () => {
 
   it('initializes active state with typing pause timers', () => {
     vi.spyOn(Math, 'random').mockReturnValue(0)
-    const { result } = renderHook(({ status }) => useBotAnimation(status as any, null, undefined), {
+    const { result } = renderHook(({ status }) => useBotAnimation(status as any, undefined), {
       initialProps: { status: 'active' },
     })
     const s = result.current.current
@@ -25,17 +25,16 @@ describe('BotAnimations', () => {
     expect(s.nextTypingPauseTimer).toBe(5)
   })
 
-  it('transitions idle to coffee when coffee point exists and random > 0.5', () => {
-    vi.spyOn(Math, 'random').mockReturnValue(0.9)
+  it('transitions idle to idle-wandering (no more coffee targeting)', () => {
     const { result, rerender } = renderHook(
-      ({ status, points }) => useBotAnimation(status as any, points as any, undefined),
+      ({ status }) => useBotAnimation(status as any, undefined),
       {
-        initialProps: { status: 'offline', points: null },
+        initialProps: { status: 'offline' },
       }
     )
-    rerender({ status: 'idle', points: { coffeePosition: [1, 0, 2], sleepCorner: [0, 0, 0] } })
-    expect(result.current.current.phase).toBe('getting-coffee')
-    expect(result.current.current.freezeWhenArrived).toBe(true)
+    rerender({ status: 'idle' })
+    expect(result.current.current.phase).toBe('idle-wandering')
+    expect(result.current.current.freezeWhenArrived).toBe(false)
   })
 
   it('renders SleepingZs and executes frame callback safely', () => {

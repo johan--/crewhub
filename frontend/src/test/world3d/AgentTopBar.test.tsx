@@ -123,12 +123,12 @@ describe('AgentTopBar', () => {
     fireEvent.mouseEnter(aliceItem)
     fireEvent.click(screen.getByTitle('Pin to top bar'))
 
-    expect(localStorage.getItem('crewhub-pinned-agent')).toBe('agent:alice:main')
+    expect(JSON.parse(localStorage.getItem('crewhub-pinned-agents')!)).toEqual(['agent:alice:main'])
     expect(screen.getByTitle(/Fly to Alice/i)).toBeInTheDocument()
 
     const flyAlice = screen.getByTitle(/Fly to Alice/i)
     fireEvent.mouseEnter(flyAlice)
     fireEvent.click(screen.getByTitle('Unpin agent'))
-    expect(localStorage.getItem('crewhub-pinned-agent')).toBeNull()
+    expect(localStorage.getItem('crewhub-pinned-agents')).toBeNull()
   })
 })

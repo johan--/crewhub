@@ -189,25 +189,28 @@ def _tool_label(name: str, input_data: dict | None) -> str:
     return ""
 
 
-def _extract_content_parts(raw_content: object, raw: bool) -> tuple[list[str], list[dict], list[str]]:  # NOSONAR
+def _extract_content_parts(raw_content: object, raw: bool) -> tuple[list[str], list[dict], list[str], list[dict]]:  # NOSONAR
     content_parts: list[str] = []
     tools: list[dict] = []
     thinking_blocks: list[str] = []
+    segments: list[dict] = []
 
     if isinstance(raw_content, str):
-        return [raw_content], tools, thinking_blocks
+        return [raw_content], tools, thinking_blocks, [{"type": "text", "text": raw_content}]
     if not isinstance(raw_content, list):
-        return content_parts, tools, thinking_blocks
+        return content_parts, tools, thinking_blocks, segments
 
     for block in raw_content:
         if isinstance(block, str):
             content_parts.append(block)
+            segments.append({"type": "text", "text": block})
             continue
         if not isinstance(block, dict):
             continue
         btype = block.get("type", "")
         if btype == "text" and block.get("text"):
             content_parts.append(block["text"])
+            segments.append({"type": "text", "text": block["text"]})
         elif btype == "thinking" and block.get("thinking"):
             thinking_blocks.append(block["thinking"])
         elif btype == "tool_use":
@@ -220,6 +223,7 @@ def _extract_content_parts(raw_content: object, raw: bool) -> tuple[list[str], l
             if raw:
                 tool_info["input"] = tool_input
             tools.append(tool_info)
+            segments.append({"type": "tool", "tool": tool_info})
         elif btype == "tool_result":
             result_content = block.get("content", "")
             if raw and isinstance(result_content, str) and len(result_content) > 500:
@@ -231,8 +235,9 @@ def _extract_content_parts(raw_content: object, raw: bool) -> tuple[list[str], l
             if raw:
                 tool_info["result"] = result_content
             tools.append(tool_info)
+            segments.append({"type": "tool", "tool": tool_info})
 
-    return content_parts, tools, thinking_blocks
+    return content_parts, tools, thinking_blocks, segments
 
 
 def _strip_context_envelope(content: str) -> str:
@@ -283,7 +288,7 @@ def _build_history_message(idx: int, entry: dict, raw: bool) -> dict | None:  # 
 
     timestamp = _normalize_timestamp(entry.get("timestamp") or msg.get("timestamp") or 0)
     raw_content = msg.get("content", []) if msg else entry.get("content", [])
-    content_parts, tools, thinking_blocks = _extract_content_parts(raw_content, raw)
+    content_parts, tools, thinking_blocks, segments = _extract_content_parts(raw_content, raw)
     content = "\n".join(content_parts).strip()
 
     if role == "user" and content:
@@ -304,6 +309,7 @@ def _build_history_message(idx: int, entry: dict, raw: bool) -> dict | None:  # 
         "timestamp": timestamp,
         "tokens": tokens,
         "tools": tools if tools else [],
+        "contentSegments": segments if segments else [],
     }
     if raw and thinking_blocks:
         payload["thinking"] = thinking_blocks
@@ -638,7 +644,18 @@ async def stream_chat_message(session_key: str, body: SendMessageBody):
                 yield "event: start\ndata: {}\n\n"
                 try:
                     async for chunk in stream_cc_discovered_response(disc_session_id, disc_project_path, message):
-                        yield f"event: delta\ndata: {json.dumps({'text': chunk})}\n\n"
+                        if "__TOOL__" in chunk:
+                            parts = chunk.split("__TOOL__")
+                            for i, part in enumerate(parts):
+                                part = part.strip()
+                                if not part:
+                                    continue
+                                if i % 2 == 1:
+                                    yield f"event: tool\ndata: {part}\n\n"
+                                elif part:
+                                    yield f"event: delta\ndata: {json.dumps({'text': part})}\n\n"
+                        else:
+                            yield f"event: delta\ndata: {json.dumps({'text': chunk})}\n\n"
                     yield "event: done\ndata: {}\n\n"
                     try:
                         from app.routes.sse import broadcast
@@ -660,7 +677,7 @@ async def stream_chat_message(session_key: str, body: SendMessageBody):
                 },
             )
 
-        # Fixed CC agent: prepend context then stream via cc_chat module
+        # Fixed CC agent: prepend context then stream via spawn_task/--print
         message = await _prepend_context_if_available(session_key, agent_id, body, message)
         from app.services.cc_chat import stream_cc_response
 
@@ -668,7 +685,29 @@ async def stream_chat_message(session_key: str, body: SendMessageBody):
             yield "event: start\ndata: {}\n\n"
             try:
                 async for chunk in stream_cc_response(agent_id, message):
-                    yield f"event: delta\ndata: {json.dumps({'text': chunk})}\n\n"
+                    # Check for markers from the output parser
+                    if "__QUESTION__" in chunk:
+                        parts = chunk.split("__QUESTION__")
+                        for i, part in enumerate(parts):
+                            part = part.strip()
+                            if not part:
+                                continue
+                            if i % 2 == 1:
+                                yield f"event: question\ndata: {part}\n\n"
+                            elif part:
+                                yield f"event: delta\ndata: {json.dumps({'text': part})}\n\n"
+                    elif "__TOOL__" in chunk:
+                        parts = chunk.split("__TOOL__")
+                        for i, part in enumerate(parts):
+                            part = part.strip()
+                            if not part:
+                                continue
+                            if i % 2 == 1:
+                                yield f"event: tool\ndata: {part}\n\n"
+                            elif part:
+                                yield f"event: delta\ndata: {json.dumps({'text': part})}\n\n"
+                    else:
+                        yield f"event: delta\ndata: {json.dumps({'text': chunk})}\n\n"
                 yield "event: done\ndata: {}\n\n"
                 try:
                     from app.routes.sse import broadcast
