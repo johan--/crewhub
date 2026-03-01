@@ -565,6 +565,7 @@ class ClaudeCodeConnection(AgentConnection):
 
                     if agent_row:
                         agent_id = agent_row[0]
+                        # Check explicit room assignment for the agent session
                         async with db.execute(
                             "SELECT room_id FROM session_room_assignments WHERE session_key = ?",
                             (f"cc:{agent_id}",),
@@ -572,6 +573,17 @@ class ClaudeCodeConnection(AgentConnection):
                             row = await cur.fetchone()
                             if row:
                                 parent_room_id = row[0]
+
+                        # Fallback: use agent's default_room_id (the frontend uses
+                        # this to place the parent, so subagents should match)
+                        if not parent_room_id:
+                            async with db.execute(
+                                "SELECT default_room_id FROM agents WHERE id = ?",
+                                (agent_id,),
+                            ) as cur:
+                                row = await cur.fetchone()
+                                if row and row[0]:
+                                    parent_room_id = row[0]
 
                     # 2) Fallback: look for discovered session keys matching the parent UUID prefix
                     if not parent_room_id:
