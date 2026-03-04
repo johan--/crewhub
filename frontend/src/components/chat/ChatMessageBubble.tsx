@@ -172,6 +172,9 @@ export function renderMarkdown(
   html = html.replaceAll(/<\/(h[234]|blockquote|ul|ol|pre|hr)><br\/>/g, '</$1>')
   html = html.replaceAll(/<br\/><(h[234]|blockquote|ul|ol|pre)/g, '<$1')
 
+  // Clean up breaks between list items (inside <ul>/<ol>)
+  html = html.replaceAll(/<\/li><br\/><li/g, '</li><li')
+
   return html
 }
 
@@ -537,8 +540,7 @@ function ZenMessageContent({
               const segClean = stripOpenClawTags(seg.text)
               if (!segClean) return null
               const segHtml = renderMarkdown(segClean)
-              const isLastText =
-                lastTextSegmentIndex(msg.contentSegments!) === i
+              const isLastText = lastTextSegmentIndex(msg.contentSegments!) === i
               return (
                 <div key={`seg-${i}`} className="zen-message-content">
                   <span dangerouslySetInnerHTML={{ __html: segHtml }} />
@@ -688,8 +690,7 @@ function InlineMessageContent({
               if (!segClean) return null
               const { codeBlockStyle: cbs, inlineCodeStyle: ics } = getCodeStyles(variant)
               const segHtml = renderMarkdown(segClean, cbs, ics)
-              const isLastText =
-                lastTextSegmentIndex(msg.contentSegments!) === i
+              const isLastText = lastTextSegmentIndex(msg.contentSegments!) === i
               return (
                 <div
                   key={`seg-${i}`}
