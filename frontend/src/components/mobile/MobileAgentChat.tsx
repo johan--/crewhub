@@ -492,9 +492,7 @@ function ChatHeader({
           {agentName}
         </div>
         <div style={{ fontSize: 11, color: isSending ? accentColor : VAR_MOBILE_TEXT_MUTED }}>
-          {isSending
-            ? (activityDetail || 'Thinking…')
-            : 'Online'}
+          {isSending ? activityDetail || 'Thinking…' : 'Online'}
         </div>
       </div>
       <ActiveTasksBadge count={subagentSessions.length} onClick={onShowTasks} />
@@ -1008,7 +1006,8 @@ export function MobileAgentChat({
   }, [messages, streamingMessageId])
 
   useEffect(() => {
-    setTimeout(() => inputRef.current?.focus(), 200)
+    const timer = setTimeout(() => inputRef.current?.focus(), 200)
+    return () => clearTimeout(timer)
   }, [])
 
   // Track CC activity detail from SSE events
