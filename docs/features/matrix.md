@@ -119,6 +119,9 @@ Research:     █                                             2% (1)
 - 📋 Tauri Desktop App (native desktop app pointing to online API, ~10MB bundle, OS keychain, auto-updates)
 - 📋 API Key Management (secure API keys with scopes, expiration, rate limiting, audit logging)
 
+### v1.0.0 (Next major)
+- 📋 Agent World Vision — agents can take a screenshot from their own camera POV in the 3D world, enabling situational awareness, visual task confirmation, and vision-LLM integration
+
 ### Research (no version assigned)
 - 🔬 Pixel avatars alternative aesthetic
 - Steam/desktop app distribution
@@ -151,8 +154,9 @@ Research:     █                                             2% (1)
 | **Spatial Awareness** | ✅ | v0.15.0 | 1 | Waypoint-based pathfinding for meeting gatherings, proximity detection |
 | **Bot Navigation** | 📋 | v0.19.0 | 0 | Voice-controlled bot movement to props (e.g. "walk to the coffee machine") |
 | **Multi-Zone System** | 📋 | v0.17.0 | 1 | Architecture for multiple themed zones |
+| **Agent World Vision** | 📋 | v1.0.0 | 0 | Agents take screenshots from their bot camera POV (off-screen WebGLRenderTarget), enabling situational awareness, visual task confirmation, and vision-LLM integration |
 
-**Total:** 6 features • 12 docs • 2 released, 4 planned
+**Total:** 7 features • 12 docs • 2 released, 5 planned
 
 ---
 
