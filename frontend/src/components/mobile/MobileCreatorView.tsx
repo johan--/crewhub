@@ -579,7 +579,7 @@ function PropGeneratorTab() {
             border: '1px solid var(--mobile-border, rgba(255,255,255,0.1))',
             borderRadius: 12,
             color: 'var(--mobile-text, #e2e8f0)',
-            fontSize: 14,
+            fontSize: 16, // ≥16px prevents iOS Safari auto-zoom on focus
             resize: 'none',
             outline: 'none',
             boxSizing: 'border-box',
