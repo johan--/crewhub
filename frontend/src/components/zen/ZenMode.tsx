@@ -804,6 +804,12 @@ export function ZenMode({
         />
       </main>
 
+      {/* Subtle zen mode indicator */}
+      <div className="zen-mode-indicator" aria-hidden="true">
+        <span>⬡</span>
+        <span>zen</span>
+      </div>
+
       <ZenStatusBar
         agentName={focusedAgentName}
         agentStatus={agentStatus}
